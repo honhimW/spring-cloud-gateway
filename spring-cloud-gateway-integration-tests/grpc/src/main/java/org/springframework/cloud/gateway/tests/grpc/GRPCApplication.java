@@ -25,16 +25,15 @@ import io.grpc.Server;
 import io.grpc.ServerCredentials;
 import io.grpc.TlsServerCredentials;
 import io.grpc.stub.StreamObserver;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.cloud.gateway.route.RouteLocator;
-import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
-import org.springframework.cloud.test.TestSocketUtils;
-import org.springframework.context.annotation.Bean;
+import org.springframework.core.env.Environment;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
@@ -45,36 +44,39 @@ import org.springframework.stereotype.Component;
 @EnableAutoConfiguration
 public class GRPCApplication {
 
-	private static final int GRPC_SERVER_PORT = TestSocketUtils.findAvailableTcpPort();
-
 	public static void main(String[] args) {
 		SpringApplication.run(GRPCApplication.class, args);
-	}
-
-	@Bean
-	public RouteLocator customRouteLocator(RouteLocatorBuilder builder) {
-		return builder.routes().route("grpc", r -> r.predicate(p -> true).uri("https://localhost:" + GRPC_SERVER_PORT))
-				.build();
 	}
 
 	@Component
 	static class GRPCServer implements ApplicationRunner {
 
+		private static final Logger log = LoggerFactory.getLogger(GRPCServer.class);
+
+		private final Environment environment;
+
 		private Server server;
+
+		GRPCServer(Environment environment) {
+			this.environment = environment;
+		}
 
 		@Override
 		public void run(ApplicationArguments args) throws Exception {
-			final GRPCServer server = new GRPCServer();
+			final GRPCServer server = new GRPCServer(environment);
 			server.start();
 		}
 
-		private void start() throws Exception {
-			/* The port on which the server should run */
+		private void start() throws IOException {
+			Integer serverPort = environment.getProperty("local.server.port", Integer.class);
+			int grpcPort = serverPort + 1;
+			/*
+			 * The port on which the server should run. We run
+			 */
 			ServerCredentials creds = createServerCredentials();
-			server = Grpc.newServerBuilderForPort(GRPC_SERVER_PORT, creds).addService(new HelloService()).build()
-					.start();
+			server = Grpc.newServerBuilderForPort(grpcPort, creds).addService(new HelloService()).build().start();
 
-			System.out.println("Starting server in port " + GRPC_SERVER_PORT);
+			log.info("Starting gRPC server in port " + grpcPort);
 
 			Runtime.getRuntime().addShutdownHook(new Thread(() -> {
 				try {
@@ -87,8 +89,9 @@ public class GRPCApplication {
 		}
 
 		private ServerCredentials createServerCredentials() throws IOException {
+			File certChain = new ClassPathResource("public.cert").getFile();
 			File privateKey = new ClassPathResource("private.key").getFile();
-			File certChain = new ClassPathResource("certificate.pem").getFile();
+
 			return TlsServerCredentials.create(certChain, privateKey);
 		}
 
@@ -103,8 +106,8 @@ public class GRPCApplication {
 			@Override
 			public void hello(HelloRequest request, StreamObserver<HelloResponse> responseObserver) {
 
-				String greeting = "Hello, " + request.getFirstName() + " " + request.getLastName();
-				System.out.println(greeting);
+				String greeting = String.format("Hello, %s %s", request.getFirstName(), request.getLastName());
+				log.info("Sending response: " + greeting);
 
 				HelloResponse response = HelloResponse.newBuilder().setGreeting(greeting).build();
 

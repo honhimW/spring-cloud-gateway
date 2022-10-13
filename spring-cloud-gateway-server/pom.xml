@@ -16,6 +16,8 @@
 	<description>Spring Cloud Gateway Server</description>
 	<properties>
 		<main.basedir>${basedir}/..</main.basedir>
+		<grpc.version>1.47.0</grpc.version>
+		<context-propagation.version>1.0.0-M4</context-propagation.version>
 	</properties>
 
 	<dependencies>
@@ -35,6 +37,11 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
+			<optional>true</optional>
+		</dependency>
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-tracing</artifactId>
 			<optional>true</optional>
 		</dependency>
 		<dependency>
@@ -82,6 +89,34 @@
 			<artifactId>reactor-extra</artifactId>
 		</dependency>
 		<dependency>
+			<groupId>com.fasterxml.jackson.dataformat</groupId>
+			<artifactId>jackson-dataformat-protobuf</artifactId>
+			<optional>true</optional>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+			<optional>true</optional>
+		</dependency>
+		<dependency>
+			<groupId>io.grpc</groupId>
+			<artifactId>grpc-netty</artifactId>
+			<optional>true</optional>
+			<version>${grpc.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>io.grpc</groupId>
+			<artifactId>grpc-protobuf</artifactId>
+			<optional>true</optional>
+			<version>${grpc.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>io.grpc</groupId>
+			<artifactId>grpc-stub</artifactId>
+			<optional>true</optional>
+			<version>${grpc.version}</version>
+		</dependency>
+		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-autoconfigure-processor</artifactId>
 			<optional>true</optional>
@@ -90,6 +125,43 @@
 			<groupId>org.springframework.cloud</groupId>
 			<artifactId>spring-cloud-starter-circuitbreaker-reactor-resilience4j</artifactId>
 			<optional>true</optional>
+		</dependency>
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>context-propagation</artifactId>
+			<version>${context-propagation.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-observation-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-tracing-integration-test</artifactId>
+			<scope>test</scope>
+			<exclusions>
+				<!-- We exclude this cause otherwise we'll have 2 tracers on the classpath for Boot -->
+				<exclusion>
+					<groupId>io.micrometer</groupId>
+					<artifactId>micrometer-tracing-bridge-otel</artifactId>
+				</exclusion>
+				<!-- We exclude this cause otherwise we'll have zipkin and wavefront on the classpath for Boot -->
+				<exclusion>
+					<groupId>io.micrometer</groupId>
+					<artifactId>micrometer-tracing-reporter-wavefront</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>com.wavefront</groupId>
+					<artifactId>*</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

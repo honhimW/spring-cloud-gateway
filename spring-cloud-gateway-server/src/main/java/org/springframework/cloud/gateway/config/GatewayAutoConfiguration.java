@@ -16,9 +16,14 @@
 
 package org.springframework.cloud.gateway.config;
 
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Supplier;
+
+import javax.net.ssl.TrustManagerFactory;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -63,15 +68,18 @@ import org.springframework.cloud.gateway.filter.RouteToRequestUrlFilter;
 import org.springframework.cloud.gateway.filter.WebsocketRoutingFilter;
 import org.springframework.cloud.gateway.filter.WeightCalculatorWebFilter;
 import org.springframework.cloud.gateway.filter.factory.AddRequestHeaderGatewayFilterFactory;
+import org.springframework.cloud.gateway.filter.factory.AddRequestHeadersIfNotPresentGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.AddRequestParameterGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.AddResponseHeaderGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.CacheRequestBodyGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.DedupeResponseHeaderGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.GatewayFilterFactory;
+import org.springframework.cloud.gateway.filter.factory.JsonToGrpcGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.MapRequestHeaderGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.PrefixPathGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.PreserveHostHeaderGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.RedirectToGatewayFilterFactory;
+import org.springframework.cloud.gateway.filter.factory.RemoveJsonAttributesResponseBodyGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.RemoveRequestHeaderGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.RemoveRequestParameterGatewayFilterFactory;
 import org.springframework.cloud.gateway.filter.factory.RemoveResponseHeaderGatewayFilterFactory;
@@ -137,6 +145,7 @@ import org.springframework.cloud.gateway.route.RouteLocator;
 import org.springframework.cloud.gateway.route.RouteRefreshListener;
 import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
 import org.springframework.cloud.gateway.support.ConfigurationService;
+import org.springframework.cloud.gateway.support.KeyValueConverter;
 import org.springframework.cloud.gateway.support.StringToZonedDateTimeConverter;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -147,6 +156,7 @@ import org.springframework.context.annotation.DependsOn;
 import org.springframework.context.annotation.Primary;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.core.env.Environment;
+import org.springframework.core.io.ResourceLoader;
 import org.springframework.http.codec.ServerCodecConfigurer;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.security.oauth2.client.ReactiveOAuth2AuthorizedClientManager;
@@ -178,6 +188,11 @@ public class GatewayAutoConfiguration {
 	@Bean
 	public StringToZonedDateTimeConverter stringToZonedDateTimeConverter() {
 		return new StringToZonedDateTimeConverter();
+	}
+
+	@Bean
+	public KeyValueConverter keyValueConverter() {
+		return new KeyValueConverter();
 	}
 
 	@Bean
@@ -290,6 +305,28 @@ public class GatewayAutoConfiguration {
 	@ConditionalOnProperty(name = "server.http2.enabled", matchIfMissing = true)
 	public GRPCResponseHeadersFilter gRPCResponseHeadersFilter() {
 		return new GRPCResponseHeadersFilter();
+	}
+
+	@Bean
+	@ConditionalOnEnabledFilter
+	@ConditionalOnProperty(name = "server.http2.enabled", matchIfMissing = true)
+	@ConditionalOnClass(name = "io.grpc.Channel")
+	public JsonToGrpcGatewayFilterFactory jsonToGRPCFilterFactory(GrpcSslConfigurer gRPCSSLContext,
+			ResourceLoader resourceLoader) {
+		return new JsonToGrpcGatewayFilterFactory(gRPCSSLContext, resourceLoader);
+	}
+
+	@Bean
+	@ConditionalOnEnabledFilter(JsonToGrpcGatewayFilterFactory.class)
+	@ConditionalOnMissingBean(GrpcSslConfigurer.class)
+	@ConditionalOnClass(name = "io.grpc.Channel")
+	public GrpcSslConfigurer grpcSslConfigurer(HttpClientProperties properties)
+			throws KeyStoreException, NoSuchAlgorithmException {
+		TrustManagerFactory trustManagerFactory = TrustManagerFactory
+				.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+		trustManagerFactory.init(KeyStore.getInstance(KeyStore.getDefaultType()));
+
+		return new GrpcSslConfigurer(properties.getSsl());
 	}
 
 	@Bean
@@ -446,6 +483,12 @@ public class GatewayAutoConfiguration {
 
 	@Bean
 	@ConditionalOnEnabledFilter
+	public AddRequestHeadersIfNotPresentGatewayFilterFactory addRequestHeadersIfNotPresentGatewayFilterFactory() {
+		return new AddRequestHeadersIfNotPresentGatewayFilterFactory();
+	}
+
+	@Bean
+	@ConditionalOnEnabledFilter
 	public MapRequestHeaderGatewayFilterFactory mapRequestHeaderGatewayFilterFactory() {
 		return new MapRequestHeaderGatewayFilterFactory();
 	}
@@ -505,6 +548,15 @@ public class GatewayAutoConfiguration {
 	@ConditionalOnEnabledFilter
 	public RedirectToGatewayFilterFactory redirectToGatewayFilterFactory() {
 		return new RedirectToGatewayFilterFactory();
+	}
+
+	@Bean
+	@ConditionalOnEnabledFilter
+	public RemoveJsonAttributesResponseBodyGatewayFilterFactory removeJsonAttributesResponseBodyGatewayFilterFactory(
+			ServerCodecConfigurer codecConfigurer, Set<MessageBodyDecoder> bodyDecoders,
+			Set<MessageBodyEncoder> bodyEncoders) {
+		return new RemoveJsonAttributesResponseBodyGatewayFilterFactory(
+				new ModifyResponseBodyGatewayFilterFactory(codecConfigurer.getReaders(), bodyDecoders, bodyEncoders));
 	}
 
 	@Bean
@@ -656,10 +708,18 @@ public class GatewayAutoConfiguration {
 		}
 
 		@Bean
+		public HttpClientSslConfigurer httpClientSslConfigurer(ServerProperties serverProperties,
+				HttpClientProperties httpClientProperties) {
+			return new HttpClientSslConfigurer(httpClientProperties.getSsl(), serverProperties) {
+			};
+		}
+
+		@Bean
 		@ConditionalOnMissingBean({ HttpClient.class, HttpClientFactory.class })
 		public HttpClientFactory gatewayHttpClientFactory(HttpClientProperties properties,
-				ServerProperties serverProperties, List<HttpClientCustomizer> customizers) {
-			return new HttpClientFactory(properties, serverProperties, customizers);
+				ServerProperties serverProperties, List<HttpClientCustomizer> customizers,
+				HttpClientSslConfigurer sslConfigurer) {
+			return new HttpClientFactory(properties, serverProperties, sslConfigurer, customizers);
 		}
 
 		@Bean

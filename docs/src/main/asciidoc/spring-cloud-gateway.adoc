@@ -534,6 +534,53 @@ spring:
 ----
 ====
 
+=== The `AddRequestHeadersIfNotPresent` `GatewayFilter` Factory
+
+The `AddRequestHeadersIfNotPresent` `GatewayFilter` factory takes a collection of `name` and `value` pairs separated by colon.
+The following example configures an `AddRequestHeadersIfNotPresent` `GatewayFilter`:
+
+.application.yml
+====
+[source,yaml]
+----
+spring:
+  cloud:
+    gateway:
+      routes:
+      - id: add_request_headers_route
+        uri: https://example.org
+        filters:
+        - AddRequestHeadersIfNotPresent=X-Request-Color-1:blue,X-Request-Color-2:green
+----
+====
+
+This listing adds 2 headers `X-Request-Color-1:blue` and `X-Request-Color-2:green` to the downstream request's headers for all matching requests.
+This is similar to how `AddRequestHeader` works, but unlike `AddRequestHeader` it will do it only if the header is not already there.
+Otherwise, the original value in the client request is sent.
+
+Additionally, to set a multi-valued header, use the header name multiple times like `AddRequestHeadersIfNotPresent=X-Request-Color-1:blue,X-Request-Color-1:green`.
+
+`AddRequestHeadersIfNotPresent` also supports URI variables used to match a path or host.
+URI variables may be used in the value and are expanded at runtime.
+The following example configures an `AddRequestHeadersIfNotPresent` `GatewayFilter` that uses a variable:
+
+.application.yml
+====
+[source,yaml]
+----
+spring:
+  cloud:
+    gateway:
+      routes:
+      - id: add_request_header_route
+        uri: https://example.org
+        predicates:
+        - Path=/red/{segment}
+        filters:
+        - AddRequestHeadersIfNotPresent=X-Request-Red:Blue-{segment}
+----
+====
+
 === The `AddRequestParameter` `GatewayFilter` Factory
 
 The `AddRequestParameter` `GatewayFilter` Factory takes a `name` and `value` parameter.
@@ -1070,6 +1117,51 @@ spring:
 ====
 
 This will send a status 302 with a `Location:https://acme.org` header to perform a redirect.
+
+=== `RemoveJsonAttributesResponseBody` `GatewayFilter` Factory
+
+The `RemoveJsonAttributesResponseBody` `GatewayFilter` factory takes a collection of `attribute names` to search for, an optional last parameter from the list can be a boolean to remove the attributes just at root level (that's the default value if not present at the end of the parameter configuration, `false`) or recursively (`true`).
+It provides a convenient method to apply a transformation to JSON body content by deleting attributes from it.
+
+The following example configures an `RemoveJsonAttributesResponseBody` `GatewayFilter`:
+
+.application.yml
+====
+[source,yaml]
+----
+spring:
+  cloud:
+    gateway:
+      routes:
+      - id: removejsonattributes_route
+        uri: https://example.org
+        filters:
+        - RemoveJsonAttributesResponseBody=id,color
+----
+====
+
+This removes attributes "id" and "color" from the JSON content body at root level.
+
+The following example configures an `RemoveJsonAttributesResponseBody` `GatewayFilter` that uses the optional last parameter:
+
+.application.yml
+====
+[source,yaml]
+----
+spring:
+  cloud:
+    gateway:
+      routes:
+      - id: removejsonattributes_recursively_route
+        uri: https://example.org
+        predicates:
+        - Path=/red/{segment}
+        filters:
+        - RemoveJsonAttributesResponseBody=id,color,true
+----
+====
+
+This removes attributes "id" and "color" from the JSON content body at any level.
 
 === The `RemoveRequestHeader` GatewayFilter Factory
 
@@ -1829,6 +1921,86 @@ spring:
 `CacheRequestBody` will extract request body and conver it to body class (such as `java.lang.String`, defined in the preceding example). then places it in the `ServerWebExchange.getAttributes()` with a key defined in `ServerWebExchangeUtils.CACHED_REQUEST_BODY_ATTR`.
 
 NOTE: This filter only works with http request (including https).
+
+=== The `JsonToGrpc` `GatewayFilter` Factory
+
+The JSONToGRPCFilter GatewayFilter Factory converts a JSON payload to a gRPC request.
+
+The filter takes the following arguments:
+
+* `protoDescriptor` Proto descriptor file.
+
+This file can be generated using `protoc` specifying the `--descriptor_set_out` flag:
+
+[source,bash]
+----
+protoc --proto_path=src/main/resources/proto/ \
+--descriptor_set_out=src/main/resources/proto/hello.pb  \
+src/main/resources/proto/hello.proto
+----
+
+* `protoFile` Proto definition file.
+
+* `service` Fully qualified name of the service that will handle the request.
+
+* `method` Method name in the service that will handle the request.
+
+NOTE: `streaming` is not supported.
+
+
+*application.yml.*
+
+[source,java]
+----
+@Bean
+public RouteLocator routes(RouteLocatorBuilder builder) {
+    return builder.routes()
+            .route("json-grpc", r -> r.path("/json/hello").filters(f -> {
+                String protoDescriptor = "file:src/main/proto/hello.pb";
+                String protoFile = "file:src/main/proto/hello.proto";
+                String service = "HelloService";
+                String method = "hello";
+                return f.jsonToGRPC(protoDescriptor, protoFile, service, method);
+            }).uri(uri))
+----
+
+[source,yaml]
+----
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: json-grpc
+          uri: https://localhost:6565/testhello
+          predicates:
+            - Path=/json/**
+          filters:
+            - name: JsonToGrpc
+              args:
+                protoDescriptor: file:proto/hello.pb
+                protoFile: file:proto/hello.proto
+                service: com.example.grpcserver.hello.HelloService
+                method: hello
+
+----
+
+When a request is made through the gateway to `/json/hello` the request will be transformed using the definition provided in `hello.proto`, sent to `com.example.grpcserver.hello.HelloService/hello`, and transform the response back to JSON.
+
+By default, it will create a `NettyChannel` using the default `TrustManagerFactory`. However, this `TrustManager` can be customized by creating a bean of type `GrpcSslConfigurer`:
+
+[source,java]
+----
+
+@Configuration
+public class GRPCLocalConfiguration {
+    @Bean
+    public GRPCSSLContext sslContext() {
+		TrustManager trustManager = trustAllCerts();
+        return new GRPCSSLContext(trustManager);
+    }
+}
+----
+
 
 === Default Filters
 
